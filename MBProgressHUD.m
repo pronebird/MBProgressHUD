@@ -247,8 +247,8 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
         type = animatingIn ? MBProgressHUDAnimationZoomIn : MBProgressHUDAnimationZoomOut;
     }
 
-    CGAffineTransform small = CGAffineTransformMakeScale(0.5f, 0.5f);
-    CGAffineTransform large = CGAffineTransformMakeScale(1.5f, 1.5f);
+    CGAffineTransform small = CGAffineTransformMakeScale(0.8f, 0.8f);
+    CGAffineTransform large = CGAffineTransformMakeScale(1.2f, 1.2f);
 
     // Set starting state
     UIView *bezelView = self.bezelView;
@@ -273,15 +273,20 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
 #pragma clang diagnostic pop
         self.backgroundView.alpha = animatingIn ? 1.f : 0.f;
     };
-
-    // Spring animations are nicer, but only available on iOS 7+
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000 || TARGET_OS_TV
-    if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_7_0) {
-        [UIView animateWithDuration:0.3 delay:0. usingSpringWithDamping:1.f initialSpringVelocity:0.f options:UIViewAnimationOptionBeginFromCurrentState animations:animations completion:completion];
-        return;
+    
+    UIViewAnimationOptions animationOptions = UIViewAnimationOptionBeginFromCurrentState;
+    
+    if(animatingIn) {
+        animationOptions |= UIViewAnimationCurveEaseOut;
+    } else {
+        animationOptions |= UIViewAnimationCurveEaseIn;
     }
-#endif
-    [UIView animateWithDuration:0.3 delay:0. options:UIViewAnimationOptionBeginFromCurrentState animations:animations completion:completion];
+
+    [UIView animateWithDuration:0.15
+                          delay:0
+                        options:animationOptions
+                     animations:animations
+                     completion:completion];
 }
 
 - (void)doneFinished:(BOOL)finished {
