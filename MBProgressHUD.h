@@ -1,12 +1,12 @@
 //
 //  MBProgressHUD.h
-//  Version 0.9.2
+//  Version 1.0.0
 //  Created by Matej Bukovinski on 2.4.09.
 //
 
 // This code is distributed under the terms and conditions of the MIT license. 
 
-// Copyright (c) 2009-2015 Matej Bukovinski
+// Copyright © 2009-2016 Matej Bukovinski
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -68,6 +68,8 @@ typedef NS_ENUM(NSInteger, MBProgressHUDBackgroundStyle) {
     /// UIVisualEffectView or UIToolbar.layer background view
     MBProgressHUDBackgroundStyleBlur
 };
+
+typedef void (^MBProgressHUDCompletionBlock)();
 
 
 NS_ASSUME_NONNULL_BEGIN
@@ -176,6 +178,11 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (weak, nonatomic) id<MBProgressHUDDelegate> delegate;
 
+/**
+ * Called after the HUD is hiden.
+ */
+@property (copy, nullable) MBProgressHUDCompletionBlock completionBlock;
+
 /*
  * Grace period is the time (in seconds) that the invoked method may be run without
  * showing the HUD. If the task finishes before the grace time runs out, the HUD will
@@ -253,6 +260,13 @@ NS_ASSUME_NONNULL_BEGIN
  * The progress of the progress indicator, from 0.0 to 1.0. Defaults to 0.0.
  */
 @property (assign, nonatomic) float progress;
+
+/// @name ProgressObject
+
+/**
+ * The NSProgress object feeding the progress information to the progress indicator.
+ */
+@property (strong, nonatomic, nullable) NSProgress *progressObject;
 
 /// @name Views
 
@@ -393,15 +407,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)hide:(BOOL)animated __attribute__((deprecated("Use hideAnimated: instead.")));
 - (void)hide:(BOOL)animated afterDelay:(NSTimeInterval)delay __attribute__((deprecated("Use hideAnimated:afterDelay: instead.")));
 
-typedef void (^MBProgressHUDCompletionBlock)();
-
 - (void)showWhileExecuting:(SEL)method onTarget:(id)target withObject:(id)object animated:(BOOL)animated __attribute__((deprecated("Use GCD directly.")));
 - (void)showAnimated:(BOOL)animated whileExecutingBlock:(dispatch_block_t)block __attribute__((deprecated("Use GCD directly.")));
 - (void)showAnimated:(BOOL)animated whileExecutingBlock:(dispatch_block_t)block completionBlock:(nullable MBProgressHUDCompletionBlock)completion __attribute__((deprecated("Use GCD directly.")));
 - (void)showAnimated:(BOOL)animated whileExecutingBlock:(dispatch_block_t)block onQueue:(dispatch_queue_t)queue __attribute__((deprecated("Use GCD directly.")));
 - (void)showAnimated:(BOOL)animated whileExecutingBlock:(dispatch_block_t)block onQueue:(dispatch_queue_t)queue
      completionBlock:(nullable MBProgressHUDCompletionBlock)completion __attribute__((deprecated("Use GCD directly.")));
-@property (copy, nullable) MBProgressHUDCompletionBlock completionBlock __attribute__((deprecated("Use GCD directly.")));
 @property (assign) BOOL taskInProgress __attribute__((deprecated("No longer needed.")));
 
 @property (nonatomic, copy) NSString *labelText __attribute__((deprecated("Use label.text instead.")));
@@ -416,7 +427,7 @@ typedef void (^MBProgressHUDCompletionBlock)();
 @property (assign, nonatomic) CGFloat yOffset __attribute__((deprecated("Set offset.y instead.")));
 @property (assign, nonatomic) CGFloat cornerRadius __attribute__((deprecated("Set bezelView.layer.cornerRadius instead.")));
 @property (assign, nonatomic) BOOL dimBackground __attribute__((deprecated("Customize HUD background properties instead.")));
-@property (strong, nonatomic) UIColor *activityIndicatorColor __attribute__((deprecated("Use UIAppearance to customize UIActivityIndicatorView.")));
+@property (strong, nonatomic) UIColor *activityIndicatorColor __attribute__((deprecated("Use UIAppearance to customize UIActivityIndicatorView. E.g.: [UIActivityIndicatorView appearanceWhenContainedIn:[MBProgressHUD class], nil].color = [UIColor redColor];")));
 @property (atomic, assign, readonly) CGSize size __attribute__((deprecated("Get the bezelView.frame.size instead.")));
 
 @end

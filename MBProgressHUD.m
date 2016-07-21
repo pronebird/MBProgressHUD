@@ -1,6 +1,6 @@
 //
 // MBProgressHUD.m
-// Version 0.9.2
+// Version 1.0.0
 // Created by Matej Bukovinski on 2.4.09.
 //
 
@@ -42,9 +42,9 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
 @property (nonatomic, weak) NSTimer *graceTimer;
 @property (nonatomic, weak) NSTimer *minShowTimer;
 @property (nonatomic, weak) NSTimer *hideDelayTimer;
+@property (nonatomic, weak) CADisplayLink *progressObjectDisplayLink;
 
 // Deprecated
-@property (copy, nullable) MBProgressHUDCompletionBlock completionBlock;
 @property (assign) BOOL taskInProgress;
 
 @end
@@ -148,7 +148,7 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
         [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
         self.graceTimer = timer;
     } 
-    // ... otherwise show the HUD imediately 
+    // ... otherwise show the HUD immediately
     else {
         [self showUsingAnimation:self.useAnimation];
     }
@@ -216,6 +216,9 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     self.showStarted = [NSDate date];
     self.alpha = 1.f;
 
+    // Needed in case we hide and re-show with the same NSProgress object attached.
+    [self setNSProgressDisplayLinkEnabled:YES];
+
     if (animated) {
         [self animateIn:YES withType:self.animationType completion:NULL];
     } else {
@@ -231,13 +234,13 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     if (animated && self.showStarted) {
         self.showStarted = nil;
         [self animateIn:NO withType:self.animationType completion:^(BOOL finished) {
-            [self doneFinished:finished];
+            [self done];
         }];
     } else {
         self.showStarted = nil;
         self.bezelView.alpha = 0.f;
         self.backgroundView.alpha = 1.f;
-        [self doneFinished:YES];
+        [self done];
     }
 }
 
@@ -289,21 +292,20 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
                      completion:completion];
 }
 
-- (void)doneFinished:(BOOL)finished {
+- (void)done {
     // Cancel any scheduled hideDelayed: calls
     [self.hideDelayTimer invalidate];
+    [self setNSProgressDisplayLinkEnabled:NO];
 
-    if (finished) {
+    if (self.hasFinished) {
         self.alpha = 0.0f;
         if (self.removeFromSuperViewOnHide) {
             [self removeFromSuperview];
         }
     }
-
-    if (self.completionBlock) {
-        MBProgressHUDCompletionBlock block = self.completionBlock;
-        self.completionBlock = NULL;
-        block();
+    MBProgressHUDCompletionBlock completionBlock = self.completionBlock;
+    if (completionBlock) {
+        completionBlock();
     }
     id<MBProgressHUDDelegate> delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(hudWasHidden:)]) {
@@ -447,15 +449,47 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     }
 #pragma clang diagnostic pop
 
+    // UIAppearance settings are prioritized. If they are preset the set color is ignored.
+
     UIView *indicator = self.indicator;
     if ([indicator isKindOfClass:[UIActivityIndicatorView class]]) {
-        ((UIActivityIndicatorView *)indicator).color = color;
+        UIActivityIndicatorView *appearance = nil;
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 90000
+        appearance = [UIActivityIndicatorView appearanceWhenContainedIn:[MBProgressHUD class], nil];
+#else
+        // For iOS 9+
+        appearance = [UIActivityIndicatorView appearanceWhenContainedInInstancesOfClasses:@[[MBProgressHUD class]]];
+#endif
+        
+        if (appearance.color == nil) {
+            ((UIActivityIndicatorView *)indicator).color = color;
+        }
     } else if ([indicator isKindOfClass:[MBRoundProgressView class]]) {
-        ((MBRoundProgressView *)indicator).progressTintColor = color;
-        ((MBRoundProgressView *)indicator).backgroundTintColor = [color colorWithAlphaComponent:0.1];
+        MBRoundProgressView *appearance = nil;
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 90000
+        appearance = [MBRoundProgressView appearanceWhenContainedIn:[MBProgressHUD class], nil];
+#else
+        appearance = [MBRoundProgressView appearanceWhenContainedInInstancesOfClasses:@[[MBProgressHUD class]]];
+#endif
+        if (appearance.progressTintColor == nil) {
+            ((MBRoundProgressView *)indicator).progressTintColor = color;
+        }
+        if (appearance.backgroundTintColor == nil) {
+            ((MBRoundProgressView *)indicator).backgroundTintColor = [color colorWithAlphaComponent:0.1];
+        }
     } else if ([indicator isKindOfClass:[MBBarProgressView class]]) {
-        ((MBBarProgressView *)indicator).progressColor = color;
-        ((MBBarProgressView *)indicator).lineColor = color;
+        MBBarProgressView *appearance = nil;
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 90000
+        appearance = [MBBarProgressView appearanceWhenContainedIn:[MBProgressHUD class], nil];
+#else
+        appearance = [MBBarProgressView appearanceWhenContainedInInstancesOfClasses:@[[MBProgressHUD class]]];
+#endif
+        if (appearance.progressColor == nil) {
+            ((MBBarProgressView *)indicator).progressColor = color;
+        }
+        if (appearance.lineColor == nil) {
+            ((MBBarProgressView *)indicator).lineColor = color;
+        }
     } else {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000 || TARGET_OS_TV
         if ([indicator respondsToSelector:@selector(setTintColor:)]) {
@@ -586,7 +620,13 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
 }
 
 - (void)layoutSubviews {
-    [self updatePaddingConstraints];
+    // There is no need to update constraints if they are going to
+    // be recreated in [super layoutSubviews] due to needsUpdateConstraints being set.
+    // This also avoids an issue on iOS 8, where updatePaddingConstraints
+    // would trigger a zombie object access.
+    if (!self.needsUpdateConstraints) {
+        [self updatePaddingConstraints];
+    }
     [super layoutSubviews];
 }
 
@@ -657,6 +697,23 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     }
 }
 
+- (void)setProgressObjectDisplayLink:(CADisplayLink *)progressObjectDisplayLink {
+    if (progressObjectDisplayLink != _progressObjectDisplayLink) {
+        [_progressObjectDisplayLink invalidate];
+        
+        _progressObjectDisplayLink = progressObjectDisplayLink;
+        
+        [_progressObjectDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+    }
+}
+
+- (void)setProgressObject:(NSProgress *)progressObject {
+    if (progressObject != _progressObject) {
+        _progressObject = progressObject;
+        [self setNSProgressDisplayLinkEnabled:YES];
+    }
+}
+
 - (void)setProgress:(float)progress {
     if (progress != _progress) {
         _progress = progress;
@@ -679,6 +736,25 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
         _defaultMotionEffectsEnabled = defaultMotionEffectsEnabled;
         [self updateBezelMotionEffects];
     }
+}
+
+#pragma mark - NSProgress
+
+- (void)setNSProgressDisplayLinkEnabled:(BOOL)enabled {
+    // We're using CADisplayLink, because NSProgress can change very quickly and observing it may starve the main thread,
+    // so we're refreshing the progress only every frame draw
+    if (enabled && self.progressObject) {
+        // Only create if not already active.
+        if (!self.progressObjectDisplayLink) {
+            self.progressObjectDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateProgressFromProgressObject)];
+        }
+    } else {
+        self.progressObjectDisplayLink = nil;
+    }
+}
+
+- (void)updateProgressFromProgressObject {
+    self.progress = self.progressObject.fractionCompleted;
 }
 
 #pragma mark - Notifications
@@ -1020,7 +1096,8 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
 @property UIVisualEffectView *effectView;
-# else
+#endif
+#if !TARGET_OS_TV
 @property UIToolbar *toolbar;
 #endif
 
@@ -1035,11 +1112,11 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     if ((self = [super initWithFrame:frame])) {
         if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_7_0) {
             _style = MBProgressHUDBackgroundStyleBlur;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
-            _color = [UIColor colorWithWhite:0.8f alpha:0.6f];
-#else
-            _color = [UIColor colorWithWhite:0.95f alpha:0.6f];
-#endif
+            if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_8_0) {
+                _color = [UIColor colorWithWhite:0.8f alpha:0.6f];
+            } else {
+                _color = [UIColor colorWithWhite:0.95f alpha:0.6f];
+            }
         } else {
             _style = MBProgressHUDBackgroundStyleSolidColor;
             _color = [[UIColor blackColor] colorWithAlphaComponent:0.8];
@@ -1086,30 +1163,41 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
     MBProgressHUDBackgroundStyle style = self.style;
     if (style == MBProgressHUDBackgroundStyleBlur) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
-        UIBlurEffect *effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
-        UIVisualEffectView *effectView = [[UIVisualEffectView alloc] initWithEffect:effect];
-        [self addSubview:effectView];
-        effectView.frame = self.bounds;
-        effectView.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
-        self.backgroundColor = self.color;
-        self.layer.allowsGroupOpacity = NO;
-        self.effectView = effectView;
-#else
-        UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectInset(self.bounds, -100.f, -100.f)];
-        toolbar.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
-        toolbar.barTintColor = self.color;
-        toolbar.translucent = YES;
-        toolbar.barTintColor = color;
-        [self addSubview:toolbar];
-        self.toolbar = toolbar;
+        if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_8_0) {
+            UIBlurEffect *effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
+            UIVisualEffectView *effectView = [[UIVisualEffectView alloc] initWithEffect:effect];
+            [self addSubview:effectView];
+            effectView.frame = self.bounds;
+            effectView.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
+            self.backgroundColor = self.color;
+            self.layer.allowsGroupOpacity = NO;
+            self.effectView = effectView;
+        } else {
+#endif
+#if !TARGET_OS_TV
+            UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectInset(self.bounds, -100.f, -100.f)];
+            toolbar.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
+            toolbar.barTintColor = self.color;
+            toolbar.translucent = YES;
+            [self addSubview:toolbar];
+            self.toolbar = toolbar;
+#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
+        }
 #endif
     } else {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
-        [self.effectView removeFromSuperview];
-        self.effectView = nil;
-#else
-        [self.toolbar removeFromSuperview];
-        self.toolbar = nil;
+        if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_8_0) {
+            [self.effectView removeFromSuperview];
+            self.effectView = nil;
+        } else {
+#endif
+#if !TARGET_OS_TV
+            [self.toolbar removeFromSuperview];
+            self.toolbar = nil;
+#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
+        }
 #endif
         self.backgroundColor = self.color;
     }
@@ -1117,11 +1205,13 @@ static const CGFloat MBDefaultDetailsLabelFontSize = 12.f;
 
 - (void)updateViewsForColor:(UIColor *)color {
     if (self.style == MBProgressHUDBackgroundStyleBlur) {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 || TARGET_OS_TV
-        self.backgroundColor = self.color;
-#else
-        self.toolbar.barTintColor = color;
+        if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_8_0) {
+            self.backgroundColor = self.color;
+        } else {
+#if !TARGET_OS_TV
+            self.toolbar.barTintColor = color;
 #endif
+        }
     } else {
         self.backgroundColor = self.color;
     }
